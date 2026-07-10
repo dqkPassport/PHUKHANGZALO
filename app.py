@@ -11,7 +11,7 @@ load_dotenv()
 
 
 # ==========================================
-# PART 1: DATABASE CONFIGURATION
+# PART 1: DATABASE CONFIGURATION //
 # ==========================================
 def get_db_connection():
     """Establish a connection to SQL Server using SQL Authentication."""

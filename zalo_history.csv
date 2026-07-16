@@ -1,0 +1,9 @@
+Date,Time,PatientName,Phone,ZaloUID,Type,Status,Task
+2026-07-16,11:48:00,Test Zalo OA (Followed),84907965957,6555046922332884468,OA,Success,Cảm ơn
+2026-07-16,11:48:01,Test ZNS (Not Followed),84913615115,N/A,ZNS,Failed: template data is missing a parameter ngay_kham,Cảm ơn
+2026-07-16,11:55:47,Test Zalo OA (Followed),84907965957,6555046922332884468,OA,Success,Cảm ơn
+2026-07-16,11:55:48,Test ZNS (Not Followed),84913615115,N/A,ZNS,Success,Cảm ơn
+2026-07-16,12:05:10,Bệnh nhân A (Đã Follow),84907965957,6555046922332884468,OA,Success,Cảm ơn
+2026-07-16,12:05:10,Bệnh nhân B (Chưa Follow),84983841181,N/A,ZNS,Success,Cảm ơn
+2026-07-16,16:57:00,Bệnh nhân A (Đã Follow),84907965957,6555046922332884468,OA,Success,Cảm ơn
+2026-07-16,16:57:01,Bệnh nhân B (Chưa Follow),84983841181,N/A,ZNS,Success,Cảm ơn

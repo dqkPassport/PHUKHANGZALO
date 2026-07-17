@@ -22,7 +22,7 @@ def load_config():
         "t1_zns": "11111",
         "t2_oa": "Nhắc hẹn: Quý khách <customer_name> (SĐT: <so_dien_thoai>) có lịch tái khám vào <schedule_time> tại <address>. Vui lòng mang theo sổ khám bệnh.",
         "t2_zns": "22222",
-        "t3_oa": "Chào <customer_name> (SĐT: <so_dien_thoai>), đã 3 ngày kể từ ngày khám <schedule_date> tại Medic Phú Khang. Tình trạng sức khỏe của bạn đã tốt hơn chưa ạ?",
+        "t3_oa": "Chào <customer_name> (SĐT: <so_dien_thoai>), đã 3 ngày kể từ ngày khám <ngay_kham> tại Medic Phú Khang. Tình trạng sức khỏe của bạn đã tốt hơn chưa ạ?",
         "t3_zns": "33333",
     }
     if os.path.exists(CONFIG_FILE):
@@ -78,25 +78,64 @@ def format_phone(phone_str):
     return clean
 
 
-def fetch_daily_patients(task_type):
-    # CHẾ ĐỘ TEST (Mock Data)
-    if st.session_state.get("test_mode", False):
-        return [
-            {
-                "Name": "Bệnh nhân A (Đã Follow)",
-                "Phone": "84907965957",
-                "ZaloID": "6555046922332884468",
-                "IsFollower": True,
-            },
-            {
-                "Name": "Bệnh nhân B (Chưa Follow)",
-                "Phone": "84983841181",
-                "ZaloID": None,
-                "IsFollower": False,
-            },
-        ]
+def fetch_test_patients_from_db(phone_list):
+    """Kết nối DB thực tế để tìm thông tin theo danh sách SĐT test"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        cursor = conn.cursor()
+        patients = []
+        for phone in phone_list:
+            if not phone or len(str(phone).strip()) < 8:
+                continue
 
-    # CHẾ ĐỘ THẬT (SQL Server)
+            clean_p = "".join(filter(str.isdigit, str(phone)))
+            search_pattern = (
+                f"%{clean_p[-9:]}%" if len(clean_p) >= 9 else f"%{clean_p}%"
+            )
+
+            query = """
+                SELECT TOP 1 TenBN, SDT, SoBHYT AS zalo_user_id
+                FROM [BENH NHAN]
+                WHERE SDT LIKE ?
+            """
+            cursor.execute(query, (search_pattern,))
+            row = cursor.fetchone()
+
+            if row:
+                is_follower = bool(
+                    row.zalo_user_id and len(str(row.zalo_user_id).strip()) > 5
+                )
+                patients.append(
+                    {
+                        "Name": f"{row.TenBN} (DB Test)",
+                        "Phone": format_phone(row.SDT),
+                        "ZaloID": row.zalo_user_id if is_follower else None,
+                        "IsFollower": is_follower,
+                    }
+                )
+            else:
+                patients.append(
+                    {
+                        "Name": f"Khách Test ({clean_p[-4:]})",
+                        "Phone": format_phone(phone),
+                        "ZaloID": None,
+                        "IsFollower": False,
+                    }
+                )
+        return patients
+    finally:
+        if conn:
+            conn.close()
+
+
+def fetch_daily_patients(task_type):
+    if st.session_state.get("test_mode", False):
+        phone1 = st.session_state.get("test_phone_1", "")
+        phone2 = st.session_state.get("test_phone_2", "")
+        return fetch_test_patients_from_db([phone1, phone2])
+
     conn = get_db_connection()
     if not conn:
         return []
@@ -169,6 +208,64 @@ def search_patients(search_term):
             conn.close()
 
 
+def search_patient_for_update(phone):
+    """Tìm bệnh nhân theo SĐT để phục vụ việc cập nhật dữ liệu"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        cursor = conn.cursor()
+        clean_p = "".join(filter(str.isdigit, str(phone)))
+        search_pattern = f"%{clean_p[-9:]}%" if len(clean_p) >= 9 else f"%{clean_p}%"
+
+        query = """
+            SELECT MaBN, TenBN, SDT, SoBHYT AS zalo_user_id
+            FROM [BENH NHAN]
+            WHERE SDT LIKE ?
+        """
+        cursor.execute(query, (search_pattern,))
+        patients = []
+        for row in cursor.fetchall():
+            patients.append(
+                {
+                    "MaBN": row.MaBN,
+                    "TenBN": row.TenBN,
+                    "SDT": row.SDT if row.SDT else "",
+                    "ZaloID": (
+                        str(row.zalo_user_id).strip() if row.zalo_user_id else ""
+                    ),
+                }
+            )
+        return patients
+    finally:
+        if conn:
+            conn.close()
+
+
+def update_patient_in_db(ma_bn, ten_bn, sdt, zalo_uid):
+    """Cập nhật thông tin bệnh nhân vào bảng BENH NHAN trong SQL Server"""
+    conn = get_db_connection()
+    if not conn:
+        return False, "Không thể kết nối Database"
+    try:
+        cursor = conn.cursor()
+        query = """
+            UPDATE [BENH NHAN]
+            SET TenBN = ?, SDT = ?, SoBHYT = ?
+            WHERE MaBN = ?
+        """
+        # Nếu zalo_uid rỗng thì gán NULL vào DB
+        val_zalo = zalo_uid if len(str(zalo_uid).strip()) > 0 else None
+        cursor.execute(query, (ten_bn, sdt, val_zalo, ma_bn))
+        conn.commit()
+        return True, "Cập nhật thành công!"
+    except Exception as e:
+        return False, f"Lỗi SQL: {str(e)}"
+    finally:
+        if conn:
+            conn.close()
+
+
 class ZaloManager:
     def __init__(self):
         self.app_id = os.getenv("ZALO_APP_ID", "")
@@ -194,7 +291,6 @@ class ZaloManager:
                 else:
                     file.write(line)
 
-        # Cập nhật biến môi trường cho phiên làm việc hiện tại
         os.environ["ZALO_ACCESS_TOKEN"] = new_access_token
         os.environ["ZALO_REFRESH_TOKEN"] = new_refresh_token
         self.access_token = new_access_token
@@ -214,7 +310,6 @@ class ZaloManager:
         response = requests.post(url, headers=headers, data=data).json()
 
         if "access_token" in response:
-            # Lấy được token mới -> Tiến hành lưu vào file .env
             self.update_env_file(response["access_token"], response["refresh_token"])
             return True
         return False
@@ -232,7 +327,6 @@ class ZaloManager:
         }
         response = requests.post(url, headers=headers, json=payload).json()
 
-        # Bắt cả lỗi -124 (Hết hạn) và -140 (Không hợp lệ)
         if response.get("error") in [-124, -140] and retry:
             if self.refresh_access_token():
                 return self.send_zns_message(phone, template_id, template_data, False)
@@ -250,7 +344,6 @@ class ZaloManager:
         }
         response = requests.post(url, headers=headers, json=payload).json()
 
-        # Bắt cả lỗi -124 (Hết hạn) và -140 (Không hợp lệ)
         if response.get("error") in [-124, -140] and retry:
             if self.refresh_access_token():
                 return self.send_oa_message(zalo_user_id, text_content, False)
@@ -262,13 +355,23 @@ class ZaloManager:
 # ==========================================
 st.set_page_config(page_title="Phu Khang Zalo Manager", page_icon="🏥", layout="wide")
 
-# SIDEBAR: CHẾ ĐỘ TEST
+# SIDEBAR: CHẾ ĐỘ TEST (Kết nối DB thực tế theo SĐT Test)
 with st.sidebar:
     st.header("⚙️ Cấu hình hệ thống")
-    test_mode = st.toggle("🧪 Bật chế độ Test (Mock Data)", key="test_mode")
+    test_mode = st.toggle("🧪 Bật chế độ Test (DB Thực tế)", key="test_mode")
     if test_mode:
         st.warning(
-            "⚠️ Đang ở chế độ Test. Danh sách gửi tin sẽ chỉ chứa 2 SĐT Test của bạn. Các thao tác gửi tin sẽ gửi thật vào Zalo."
+            "⚠️ Đang ở chế độ Test. Hệ thống sẽ kết nối SQL Server để tìm thông tin 2 SĐT dưới đây."
+        )
+        st.text_input(
+            "📱 SĐT Test 1 (Ưu tiên có Zalo UID):",
+            value="0907965957",
+            key="test_phone_1",
+        )
+        st.text_input(
+            "📱 SĐT Test 2 (Kiểm tra ZNS):",
+            value="0913615115",
+            key="test_phone_2",
         )
 
 st.title("🏥 Medic Phú Khang - Trung tâm CSKH Zalo")
@@ -277,11 +380,12 @@ st.title("🏥 Medic Phú Khang - Trung tâm CSKH Zalo")
 cfg = load_config()
 zalo = ZaloManager()
 
-# Tạo 4 Tab tính năng chính
-tab_tasks, tab_search, tab_templates, tab_stats = st.tabs(
+# Tạo 5 Tab tính năng chính (Đã thêm Tab Cập nhật)
+tab_tasks, tab_search, tab_update, tab_templates, tab_stats = st.tabs(
     [
         "🚀 Gửi tin hằng ngày",
         "🔍 Tra cứu Bệnh nhân",
+        "✏️ Cập nhật Bệnh nhân",
         "📝 Quản lý Kịch bản",
         "📊 Thống kê & Lịch sử",
     ]
@@ -293,7 +397,7 @@ tab_tasks, tab_search, tab_templates, tab_stats = st.tabs(
 with tab_tasks:
     if st.session_state.get("test_mode", False):
         st.warning(
-            "Đang sử dụng dữ liệu Test: 0907965957 (Có UID) và 0913615115 (Không UID)"
+            f"Đang sử dụng dữ liệu Test từ DB cho 2 SĐT: {st.session_state.get('test_phone_1', '')} và {st.session_state.get('test_phone_2', '')}"
         )
     else:
         st.info(
@@ -366,17 +470,20 @@ with tab_tasks:
             )
             if st.button("▶ Gửi tin Nhắc hẹn", type="primary"):
                 progress = st.progress(0)
+
                 tomorrow = (
                     datetime.date.today() + datetime.timedelta(days=1)
                 ).strftime("%d/%m/%Y")
+                address = "Phòng khám đa khoa Medic Phú Khang"
+
                 for idx, p in enumerate(st.session_state.p2):
                     if p["IsFollower"]:
                         msg = (
                             cfg["t2_oa"]
                             .replace("<customer_name>", p["Name"])
-                            .replace("<schedule_time>", tomorrow)
                             .replace("<so_dien_thoai>", p["Phone"])
-                            .replace("<address>", "PKĐK Medic Phú Khang")
+                            .replace("<schedule_time>", tomorrow)
+                            .replace("<address>", address)
                         )
                         res = zalo.send_oa_message(p["ZaloID"], msg)
                         status = (
@@ -400,7 +507,7 @@ with tab_tasks:
                                 "customer_name": p["Name"],
                                 "so_dien_thoai": p["Phone"],
                                 "schedule_time": tomorrow,
-                                "address": "PKĐK Medic Phú Khang",
+                                "address": address,
                             },
                         )
                         status = (
@@ -430,16 +537,18 @@ with tab_tasks:
             )
             if st.button("▶ Gửi tin Hỏi thăm", type="primary"):
                 progress = st.progress(0)
-                past_date = (
+
+                ngay_kham = (
                     datetime.date.today() - datetime.timedelta(days=3)
                 ).strftime("%d/%m/%Y")
+
                 for idx, p in enumerate(st.session_state.p3):
                     if p["IsFollower"]:
                         msg = (
                             cfg["t3_oa"]
                             .replace("<customer_name>", p["Name"])
                             .replace("<so_dien_thoai>", p["Phone"])
-                            .replace("<schedule_date>", past_date)
+                            .replace("<ngay_kham>", ngay_kham)
                         )
                         res = zalo.send_oa_message(p["ZaloID"], msg)
                         status = (
@@ -457,7 +566,7 @@ with tab_tasks:
                             {
                                 "customer_name": p["Name"],
                                 "so_dien_thoai": p["Phone"],
-                                "schedule_date": past_date,
+                                "ngay_kham": ngay_kham,
                             },
                         )
                         status = (
@@ -499,7 +608,86 @@ with tab_search:
                 st.error("Không tìm thấy bệnh nhân nào khớp với từ khóa.")
 
 # ------------------------------------------
-# TAB 3: QUẢN LÝ KỊCH BẢN
+# TAB 3: CẬP NHẬT BỆNH NHÂN (NEW TAB)
+# ------------------------------------------
+with tab_update:
+    st.header("✏️ Cập nhật thông tin Bệnh nhân theo SĐT")
+    st.write(
+        "Tra cứu theo Số điện thoại và cập nhật Tên, SĐT mới hoặc bổ sung Zalo UID cho bệnh nhân trong Database."
+    )
+
+    update_phone_input = st.text_input(
+        "Nhập Số điện thoại cần cập nhật:",
+        placeholder="Ví dụ: 0907965957...",
+        key="update_phone_search",
+    )
+
+    if st.button("🔍 Tìm thông tin", type="primary"):
+        if len(update_phone_input) < 8:
+            st.warning("Vui lòng nhập ít nhất 8 chữ số của SĐT.")
+        else:
+            st.session_state.update_results = search_patient_for_update(
+                update_phone_input
+            )
+
+    # Nếu có kết quả tìm kiếm, hiển thị form cập nhật
+    if "update_results" in st.session_state and st.session_state.update_results:
+        results = st.session_state.update_results
+        st.success(f"Tìm thấy {len(results)} bệnh nhân khớp với SĐT này:")
+
+        # Nếu tìm thấy nhiều người chung SĐT, cho phép chọn bằng dropdown
+        selected_idx = 0
+        if len(results) > 1:
+            options = [
+                f"Mã BN: {p['MaBN']} - {p['TenBN']} (SĐT: {p['SDT']})" for p in results
+            ]
+            selected_option = st.selectbox(
+                "⚠️ Phát hiện nhiều bệnh nhân trùng SĐT. Hãy chọn đúng người cần sửa:",
+                options,
+            )
+            selected_idx = options.index(selected_option)
+
+        target_patient = results[selected_idx]
+
+        st.divider()
+        st.subheader(
+            f"📋 Đang sửa thông tin cho: **{target_patient['TenBN']}** (Mã BN: `{target_patient['MaBN']}`)"
+        )
+
+        with st.form("edit_patient_form"):
+            new_name = st.text_input("Tên Bệnh nhân:", value=target_patient["TenBN"])
+            new_phone = st.text_input(
+                "Số điện thoại (SDT):", value=target_patient["SDT"]
+            )
+            new_zalo_uid = st.text_input(
+                "Zalo User ID (SoBHYT - Bỏ trống nếu không có):",
+                value=target_patient["ZaloID"],
+                help="Đây là cột SoBHYT trong CSDL được dùng để lưu User ID Zalo OA.",
+            )
+
+            if st.form_submit_button("💾 Lưu Cập Nhật Vào Database"):
+                if not new_name or not new_phone:
+                    st.error("⚠️ Tên bệnh nhân và Số điện thoại không được để trống!")
+                else:
+                    success, msg = update_patient_in_db(
+                        target_patient["MaBN"],
+                        new_name,
+                        new_phone,
+                        new_zalo_uid,
+                    )
+                    if success:
+                        st.success(f"✅ {msg}")
+                        # Xóa bộ nhớ tạm để tìm kiếm lần sau tải lại dữ liệu mới nhất
+                        del st.session_state.update_results
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg}")
+
+    elif "update_results" in st.session_state:
+        st.error("❌ Không tìm thấy bệnh nhân nào có Số điện thoại này trong hệ thống!")
+
+# ------------------------------------------
+# TAB 4: QUẢN LÝ KỊCH BẢN
 # ------------------------------------------
 with tab_templates:
     st.header("📝 Thiết lập Nội dung Tin nhắn")
@@ -533,7 +721,7 @@ with tab_templates:
             )
 
 # ------------------------------------------
-# TAB 4: THỐNG KÊ & LỊCH SỬ
+# TAB 5: THỐNG KÊ & LỊCH SỬ
 # ------------------------------------------
 with tab_stats:
     st.header("📊 Báo cáo Gửi tin Zalo")
@@ -558,13 +746,11 @@ with tab_stats:
 
         # Bảng Lịch sử chi tiết
         st.subheader("Lịch sử chi tiết")
-        # Sắp xếp ngày mới nhất lên đầu
         df_display = df_history.sort_values(
             by=["Date", "Time"], ascending=[False, False]
         )
         st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-        # Nút xóa lịch sử
         if st.button("🗑️ Xóa toàn bộ lịch sử"):
             os.remove(HISTORY_FILE)
             st.success("Đã xóa dữ liệu lịch sử. Vui lòng tải lại trang (F5).")

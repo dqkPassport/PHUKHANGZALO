@@ -3,6 +3,6 @@
     "t1_zns": "606522",
     "t2_oa": "Thông báo lịch hẹn tái khám: Quý khách <customer_name> , SĐT: <so_dien_thoai> có lịch tái khám vào ngày <schedule_time> tại <address>. Vui lòng tái khám đúng ngày để đảm bảo hiệu quả khám chữa bệnh.",
     "t2_zns": "606521",
-    "t3_oa": "Chào <customer_name> (SĐT: <so_dien_thoai>), đã 3 ngày kể từ ngày khám <schedule_date> tại Medic Phú Khang. Tình trạng sức khỏe của bạn đã tốt hơn chưa ạ?",
-    "t3_zns": "33333"
+    "t3_oa": "Xin chào <customer_name> , SĐT: <so_dien_thoai>, đã 3 ngày kể từ ngày khám <ngay_kham> tại  hệ thống Medic Phú Khang. Tình trạng sức khỏe của Quý khách đã tốt hơn chưa ạ? Nếu có dấu hiệu bất thường nào, Quý khách hãy nhắn tin lại để Phòng khám hỗ trợ nhé! Chúc Quý khách mau khỏe!",
+    "t3_zns": "608730"
 }
